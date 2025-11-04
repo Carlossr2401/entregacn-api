@@ -1,303 +1,208 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Entrega 1.2 Versión Desacoplada Flask + ECS + Fargate
+  Stack de API Gateway + DynamoDB con 5 Lambdas (con GET /notas para todos los items).
 
+# -------------------------------------------------------------------
+# 1. Parámetros (con GET ALL en lugar de GET BY STUDENT)
+# -------------------------------------------------------------------
 Parameters:
-  # Lo seleccciono al crear por CloudFormation
-  MyKeyName:
-    Description: Nombre del Key Pair para SSH (opcional, solo para EC2 si necesitas bastion)
-    Type: AWS::EC2::KeyPair::KeyName
-  LatestAmazonLinuxAmi:
-    Description: Última AMI Amazon Linux 2023
-    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
-    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'
+  CreateNoteLambdaArn:
+    Type: String
+    Description: El ARN de la función Lambda (creada manually) para POST /notas
+  GetNoteByIdLambdaArn:
+    Type: String
+    Description: El ARN de la función Lambda (creada manually) para GET /notas/{noteId}
+  GetAllNotesLambdaArn:
+    Type: String
+    Description: El ARN de la función Lambda (creada manually) para GET /notas (traer todo)
+  UpdateNoteLambdaArn:
+    Type: String
+    Description: El ARN de la función Lambda (creada manually) para PUT /notas/{noteId}
+  DeleteNoteLambdaArn:
+    Type: String
+    Description: El ARN de la función Lambda (creada manually) para DELETE /notas/{noteId}
 
+# -------------------------------------------------------------------
+# 2. Base de Datos
+# -------------------------------------------------------------------
 Resources:
-
-  ######################
-  # 1️⃣ VPC y Subredes  #
-  ######################
-  MyVPC:
-    Type: AWS::EC2::VPC
+  NotasTable:
+    Type: AWS::DynamoDB::Table
     Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: AppVPC
+      TableName: NotasDeClase
+      AttributeDefinitions:
+        - AttributeName: NoteID
+          AttributeType: S
+        - AttributeName: AlumnoNombre
+          AttributeType: S
+      KeySchema:
+        - AttributeName: NoteID
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: AlumnoIndex
+          KeySchema:
+            - AttributeName: AlumnoNombre
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
 
-  AppSubnet:
-    Type: AWS::EC2::Subnet
+  # -------------------------------------------------------------------
+  # 3. API Gateway (HTTP API)
+  # -------------------------------------------------------------------
+  NotesApi:
+    Type: AWS::ApiGatewayV2::Api
     Properties:
-      VpcId: !Ref MyVPC
-      CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: false
-      Tags:
-        - Key: Name
-          Value: AppSubnet
-
-  DBSubnet:
-    Type: AWS::EC2::Subnet
+      Name: NotasApi-Vinculada-5
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          
+  ApiGatewayDefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
     Properties:
-      VpcId: !Ref MyVPC
-      CidrBlock: 10.0.2.0/24
-      MapPublicIpOnLaunch: false
-      Tags:
-        - Key: Name
-          Value: DBSubnet
+      ApiId: !Ref NotesApi
+      StageName: $default
+      AutoDeploy: true
 
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-
-  AttachGateway:
-    Type: AWS::EC2::VPCGatewayAttachment
+  # -------------------------------------------------------------------
+  # 4. Integraciones
+  # -------------------------------------------------------------------
+  CreateNoteIntegration:
+    Type: AWS::ApiGatewayV2::Integration
     Properties:
-      VpcId: !Ref MyVPC
-      InternetGatewayId: !Ref InternetGateway
-
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
+      ApiId: !Ref NotesApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Ref CreateNoteLambdaArn
+      PayloadFormatVersion: '2.0'
+      
+  GetNoteByIdIntegration:
+    Type: AWS::ApiGatewayV2::Integration
     Properties:
-      VpcId: !Ref MyVPC
-
-  PublicRoute:
-    Type: AWS::EC2::Route
-    DependsOn: AttachGateway
+      ApiId: !Ref NotesApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Ref GetNoteByIdLambdaArn
+      PayloadFormatVersion: '2.0'
+      
+  GetAllNotesIntegration:
+    Type: AWS::ApiGatewayV2::Integration
     Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
+      ApiId: !Ref NotesApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Ref GetAllNotesLambdaArn
+      PayloadFormatVersion: '2.0'
 
-  AppSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
+  UpdateNoteIntegration:
+    Type: AWS::ApiGatewayV2::Integration
     Properties:
-      SubnetId: !Ref AppSubnet
-      RouteTableId: !Ref PublicRouteTable
-
-  ###########################
-  # 2️⃣ Security Groups      #
-  ###########################
-  ECSServiceSG:
-    Type: AWS::EC2::SecurityGroup
+      ApiId: !Ref NotesApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Ref UpdateNoteLambdaArn
+      PayloadFormatVersion: '2.0'
+      
+  DeleteNoteIntegration:
+    Type: AWS::ApiGatewayV2::Integration
     Properties:
-      GroupDescription: Permite tráfico interno desde ALB
-      VpcId: !Ref MyVPC
+      ApiId: !Ref NotesApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Ref DeleteNoteLambdaArn
+      PayloadFormatVersion: '2.0'
 
-  RdsSG:
-    Type: AWS::EC2::SecurityGroup
+  # -------------------------------------------------------------------
+  # 5. Rutas de la API (Ruta de Alumno reemplazada)
+  # -------------------------------------------------------------------
+  RoutePostNote:
+    Type: AWS::ApiGatewayV2::Route
     Properties:
-      GroupDescription: Permite tráfico desde ECS
-      VpcId: !Ref MyVPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 5432
-          ToPort: 5432
-          SourceSecurityGroupId: !Ref ECSServiceSG
+      ApiId: !Ref NotesApi
+      RouteKey: 'POST /notas'
+      Target: !Sub 'integrations/${CreateNoteIntegration}'
 
-  ALBSG:
-    Type: AWS::EC2::SecurityGroup
+  RouteGetNoteById:
+    Type: AWS::ApiGatewayV2::Route
     Properties:
-      GroupDescription: Permite tráfico HTTP desde API Gateway
-      VpcId: !Ref MyVPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-
-  ###########################
-  # 3️⃣ S3 + CloudFront      #
-  ###########################
-  WebsiteBucket:
-    Type: AWS::S3::Bucket
+      ApiId: !Ref NotesApi
+      RouteKey: 'GET /notas/{noteId}'
+      Target: !Sub 'integrations/${GetNoteByIdIntegration}'
+      
+  RouteGetAllNotes:
+    Type: AWS::ApiGatewayV2::Route
     Properties:
-      BucketName: !Sub "${AWS::StackName}-frontend"
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
+      ApiId: !Ref NotesApi
+      RouteKey: 'GET /notas'
+      Target: !Sub 'integrations/${GetAllNotesIntegration}'
 
-  CloudFrontDistribution:
-    Type: AWS::CloudFront::Distribution
+  RoutePutNote:
+    Type: AWS::ApiGatewayV2::Route
     Properties:
-      DistributionConfig:
-        Enabled: true
-        DefaultRootObject: index.html
-        Origins:
-          - DomainName: !GetAtt WebsiteBucket.DomainName
-            Id: S3Origin
-            S3OriginConfig: {}
-        DefaultCacheBehavior:
-          TargetOriginId: S3Origin
-          ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods:
-            - GET
-            - HEAD
-          CachedMethods:
-            - GET
-            - HEAD
-        ViewerCertificate:
-          CloudFrontDefaultCertificate: true
+      ApiId: !Ref NotesApi
+      RouteKey: 'PUT /notas/{noteId}'
+      Target: !Sub 'integrations/${UpdateNoteIntegration}'
 
-  ###########################
-  # 4️⃣ ECR                  #
-  ###########################
-  AppECR:
-    Type: AWS::ECR::Repository
+  RouteDeleteNote:
+    Type: AWS::ApiGatewayV2::Route
     Properties:
-      RepositoryName: app-repo
+      ApiId: !Ref NotesApi
+      RouteKey: 'DELETE /notas/{noteId}'
+      Target: !Sub 'integrations/${DeleteNoteIntegration}'
 
-
-  ###########################
-  # 5️⃣ ECS Cluster + Fargate #
-  ###########################
-  ECSCluster:
-    Type: AWS::ECS::Cluster
+  # -------------------------------------------------------------------
+  # 6. Permisos
+  # -------------------------------------------------------------------
+  LambdaPermissionCreate:
+    Type: AWS::Lambda::Permission
     Properties:
-      ClusterName: !Sub "${AWS::StackName}-cluster"
-
-  ECSServiceTaskRole:
-    Type: AWS::IAM::Role
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CreateNoteLambdaArn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
+      
+  LambdaPermissionGetById:
+    Type: AWS::Lambda::Permission
     Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      Path: "/"
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-
-  ###########################
-  # 6️⃣ Secrets Manager      #
-  ###########################
-  DBSecret:
-    Type: AWS::SecretsManager::Secret
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref GetNoteByIdLambdaArn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
+      
+  LambdaPermissionGetAllNotes: # <-- CAMBIADO
+    Type: AWS::Lambda::Permission
     Properties:
-      Name: !Sub "${AWS::StackName}-db-secret"
-      Description: "Credenciales de la DB PostgreSQL"
-      GenerateSecretString:
-        SecretStringTemplate: '{"username":"admin"}'
-        GenerateStringKey: "password"
-        PasswordLength: 16
-        ExcludeCharacters: '"@/\'
-
-  ###########################
-  # 7️⃣ RDS PostgreSQL       #
-  ###########################
-  RDSSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref GetAllNotesLambdaArn # <-- CAMBIADO
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
+      
+  LambdaPermissionUpdate:
+    Type: AWS::Lambda::Permission
     Properties:
-      DBSubnetGroupDescription: "Subnets para RDS"
-      SubnetIds:
-        - !Ref DBSubnet
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-rds-subnet"
-
-  RDSInstance:
-    Type: AWS::RDS::DBInstance
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref UpdateNoteLambdaArn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
+      
+  LambdaPermissionDelete:
+    Type: AWS::Lambda::Permission
     Properties:
-      DBName: appdb
-      Engine: postgres
-      MasterUsername: !Join [ "", [ !GetAtt DBSecret.SecretString.username ] ]
-      MasterUserPassword: !Join [ "", [ !GetAtt DBSecret.SecretString.password ] ]
-      AllocatedStorage: 20
-      DBInstanceClass: db.t3.micro
-      VPCSecurityGroups:
-        - !Ref RdsSG
-      DBSubnetGroupName: !Ref RDSSubnetGroup
-
-  ###########################
-  # 8️⃣ ALB + Target Group     #
-  ###########################
-  ALB:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: !Sub "${AWS::StackName}-alb"
-      Subnets:
-        - !Ref AppSubnet
-      SecurityGroups:
-        - !Ref ALBSG
-      Scheme: internal
-      Type: application
-
-  ALBTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      VpcId: !Ref MyVPC
-      Port: 5000
-      Protocol: HTTP
-      TargetType: ip
-      HealthCheckPath: /
-
-  ALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref ALB
-      Port: 80
-      Protocol: HTTP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref ALBTargetGroup
-
-  ###########################
-  # 9️⃣ ECS Task Definition   #
-  ###########################
-  MyECSTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: my-app-task
-      Cpu: 256
-      Memory: 512
-      NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
-      ExecutionRoleArn: arn:aws:iam::<ACCOUNT_ID>:role/LabRole   # <-- Aquí usamos LabRole
-      ContainerDefinitions:
-        - Name: flask-api
-          Image: <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/app-repo:latest
-          PortMappings:
-            - ContainerPort: 5000
-          Environment:
-            - Name: DB_SECRET_ARN
-              Value: arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:<NOMBRE_SECRETO>
-
-
-  ECSService:
-    Type: AWS::ECS::Service
-    Properties:
-      Cluster: !Ref ECSCluster
-      LaunchType: FARGATE
-      TaskDefinition: !Ref ECSTaskDefinition
-      DesiredCount: 1
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: false
-          Subnets:
-            - !Ref AppSubnet
-          SecurityGroups:
-            - !Ref ECSServiceSG
-      LoadBalancers:
-        - TargetGroupArn: !Ref ALBTargetGroup
-          ContainerName: app
-          ContainerPort: 5000
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DeleteNoteLambdaArn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
 
 Outputs:
-  CloudFrontURL:
-    Description: URL de acceso al Frontend
-    Value: !GetAtt CloudFrontDistribution.DomainName
-
-  ECRRepository:
-    Description: URI del repositorio ECR
-    Value: !GetAtt AppECR.RepositoryUri
-
-  ECSClusterName:
-    Description: Nombre del cluster ECS
-    Value: !Ref ECSCluster
-
-  DBSecretARN:
-    Description: ARN del secreto de la DB
-    Value: !Ref DBSecret
+  NotasApiEndpoint:
+    Description: "URL del endpoint de la API de Notas (conectada a 5 Lambdas manuales)"
+    Value: !GetAtt NotesApi.ApiEndpoint
+  NotasTableName:
+    Description: "Nombre de la tabla DynamoDB de Notas"
+    Value: !Ref NotasTable

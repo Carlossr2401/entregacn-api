@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Entrega 1 CN con Fargate (Contenedores) usando LabRole'
+Description: 'Entrega 1.1 CN con Fargate (Contenedores) usando LabRole + RDS PostgreSQL en la misma pila (Corregido con Logs)'
 
 Parameters:
   VpcId:
@@ -7,77 +7,120 @@ Parameters:
     Type: AWS::EC2::VPC::Id
 
   SubnetIds:
-    Description: 'Elige al menos DOS subredes PÚBLICAS de tu VPC (para el Balanceador).'
+    Description: 'Elige al menos DOS subredes (DEBEN SER PÚBLICAS para el ALB y Fargate con IP pública).'
     Type: List<AWS::EC2::Subnet::Id>
 
   ImageUrl:
     Description: 'La URL completa de tu imagen en ECR (ej. 123456.dkr.ecr.region.amazonaws.com/mi-api:latest)'
     Type: String
-    
+
   ContainerPort:
     Description: 'El puerto en el que tu API escucha DENTRO del contenedor (ej. 3000, 5000, 8080)'
     Type: Number
-    Default: 80
-    
+    Default: 5000
+
   ExecutionRoleArn:
     Description: 'El ARN completo de tu rol de IAM existente (LabRole)'
     Type: String
-    # Ejemplo: arn:aws:iam::111122223333:role/LabRole
+
+  # Parámetros para RDS (no Secrets Manager)
+  DBUsername:
+    Description: 'Usuario maestro para la base de datos PostgreSQL'
+    Type: String
+    Default: postgresadmin # CAMBIADO: "admin" es una palabra reservada
+
+  DBPassword:
+    Description: 'Contraseña del usuario maestro para PostgreSQL (se recomienda NoEcho en producción)'
+    Type: String
+    NoEcho: true
+
+  DBName:
+    Description: 'Nombre de la base de datos a crear'
+    Type: String
+    Default: appdb
+
+  DBInstanceClass:
+    Description: 'Clase de instancia RDS (ej. db.t3.micro)'
+    Type: String
+    Default: db.t3.micro
+
+  DBAllocatedStorage:
+    Description: 'GB de almacenamiento para la RDS'
+    Type: Number
+    Default: 20
 
 Resources:
-  # 1. El Cluster de ECS (Agrupador lógico)
+  # 1. El Cluster de ECS
   MyECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: 'cluster-api-clase'
 
+  # NUEVO RECURSO: Grupo de Logs para el contenedor
+  MyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/api-clase'
+      RetentionInDays: 7 # Guarda los logs por 7 días
+
   # 2. Grupo de Seguridad para el Balanceador (Abierto al puerto 80)
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: 'Permite tráfico HTTP (puerto 80) desde Internet'
+      GroupDescription: 'Permite trafico HTTP (puerto 80) desde Internet'
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: 0.0.0.0/0 # Abierto a todo el mundo
+          CidrIp: 0.0.0.0/0
 
   # 3. Grupo de Seguridad para el Contenedor (Solo abierto al Balanceador)
   ContainerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: 'Permite tráfico solo desde el Balanceador de Carga'
+      GroupDescription: 'Permite trafico solo desde el Balanceador de Carga'
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: !Ref ContainerPort
           ToPort: !Ref ContainerPort
-          # Solo permite tráfico que venga desde el Security Group del Balanceador
-          SourceSecurityGroupId: !GetAtt LoadBalancerSecurityGroup.GroupId 
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
 
-  # 4. El Balanceador de Carga (ALB)
+  # 4. Grupo de Seguridad para la Base de Datos (permitir desde contenedor)
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Permite acceso PostgreSQL desde los contenedores del servicio'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref ContainerSecurityGroup
+
+  # 5. El Balanceador de Carga (ALB)
   MyLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
       Name: 'api-clase-lb'
       Scheme: internet-facing
-      Subnets: !Ref SubnetIds # Debe estar en subredes públicas
+      Subnets: !Ref SubnetIds
       SecurityGroups:
         - !Ref LoadBalancerSecurityGroup
 
-  # 5. El "Target Group" (A dónde apunta el ALB)
+  # 6. El "Target Group"
   MyTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: 'tg-api-clase'
       VpcId: !Ref VpcId
       Protocol: HTTP
-      Port: !Ref ContainerPort # El puerto de tu contenedor
-      HealthCheckPath: '/' # AWS comprobará esta ruta (ej. '/') para ver si tu API está viva
-      TargetType: ip # Requerido por Fargate
+      Port: !Ref ContainerPort
+      HealthCheckPath: '/health' # Tu API SÍ tiene esta ruta, la dejamos
+      TargetType: ip
 
-  # 6. El "Listener" (Escucha en puerto 80 y reenvía al Target Group)
+  # 7. El "Listener"
   MyListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -88,29 +131,73 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref MyTargetGroup
 
-  # 7. La "Task Definition" (La receta de tu contenedor)
+  # 8. Subnet group para RDS (usa los SubnetIds proporcionados)
+  MyDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'Subnet group para la RDS PostgreSQL de la pila'
+      SubnetIds: !Ref SubnetIds
+      DBSubnetGroupName: !Sub 'db-subnet-group-${AWS::StackName}'
+
+  # 9. Instancia RDS PostgreSQL
+  MyDB:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub 'rds-postgres-${AWS::StackName}'
+      Engine: postgres
+      # CAMBIADO: Eliminamos EngineVersion para que AWS elija la última compatible
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+      DBSubnetGroupName: !Ref MyDBSubnetGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      BackupRetentionPeriod: 7
+      DeletionProtection: false
+
+  # 10. La "Task Definition"
   MyTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: 'task-api-clase'
-      RequiresCompatibilities: 
+      RequiresCompatibilities:
         - FARGATE
-      NetworkMode: awsvpc # Requerido por Fargate
-      Cpu: 256 # 0.25 vCPU
-      Memory: 512 # 0.5 GB
-      
-      # --- ¡AQUÍ ESTÁ EL CAMBIO! ---
-      # Usa el ARN del parámetro que le pasamos
-      ExecutionRoleArn: !Ref ExecutionRoleArn 
-      
+      NetworkMode: awsvpc
+      Cpu: 256
+      Memory: 512
+      ExecutionRoleArn: !Ref ExecutionRoleArn
       ContainerDefinitions:
         - Name: 'mi-api-container'
           Image: !Ref ImageUrl
           PortMappings:
             - ContainerPort: !Ref ContainerPort
               Protocol: tcp
+              
+          # SECCIÓN AÑADIDA: Configuración de Logs
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref MyLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
 
-  # 8. El Servicio (El director que lanza la tarea)
+          Environment:
+            - Name: DB_USERNAME
+              Value: !Ref DBUsername
+            - Name: DB_PASSWORD
+              Value: !Ref DBPassword
+            - Name: DB_NAME
+              Value: !Ref DBName
+            - Name: DB_PORT
+              Value: !GetAtt MyDB.Endpoint.Port
+            - Name: DB_HOST
+              Value: !GetAtt MyDB.Endpoint.Address
+
+  # 11. El Servicio (Fargate)
   MyService:
     Type: AWS::ECS::Service
     Properties:
@@ -118,20 +205,94 @@ Resources:
       Cluster: !Ref MyECSCluster
       TaskDefinition: !Ref MyTaskDefinition
       LaunchType: FARGATE
-      DesiredCount: 1 # Cuántas copias de tu contenedor quieres
+      DesiredCount: 1
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: ENABLED # Necesario para que Fargate pueda descargar tu imagen de ECR
+          AssignPublicIp: ENABLED
           Subnets: !Ref SubnetIds
           SecurityGroups:
             - !Ref ContainerSecurityGroup
-      LoadBalancers: # Conecta el servicio al Balanceador
+      LoadBalancers:
         - ContainerName: 'mi-api-container'
           ContainerPort: !Ref ContainerPort
           TargetGroupArn: !Ref MyTargetGroup
-    DependsOn: MyListener # Se asegura de crear el Listener antes que el servicio
+    
+    # ESTA ES LA INDENTACIÓN CORRECTA (al mismo nivel que Type y Properties)
+    DependsOn:
+      - MyListener
+      - MyDB
+
+  # 12. API Gateway (HTTP API)
+  MyHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: 'api-gateway-clase'
+      ProtocolType: HTTP
+
+      # ¡ASEGÚRATE DE QUE ESTA LÍNEA ESTÉ MODIFICADA!
+      Description: 'API Gateway para el servicio de Fargate - v2' 
+
+      # ¡Y ASEGÚRATE DE QUE ESTE BLOQUE ESTÉ PRESENTE!
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+          - PATCH
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          - '*'
+        MaxAge: 3600
+
+  MyApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref MyHttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri:
+        Fn::Join:
+          - ''
+          - - 'http://'
+            - !GetAtt MyLoadBalancer.DNSName
+            - '/{proxy}'
+      PayloadFormatVersion: '1.0'
+
+  MyApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref MyHttpApi
+      RouteKey: 'ANY /{proxy+}'
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref MyApiIntegration
+
+  MyApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref MyHttpApi
+      StageName: '$default'
+      AutoDeploy: true
 
 Outputs:
-  ApiEndpoint:
-    Description: 'La URL pública de la API'
-    Value: !Join [ '', [ 'http://', !GetAtt MyLoadBalancer.DNSName ] ]
+  ApiGatewayEndpoint:
+    Description: 'La URL PÚBLICA de la API (vía API Gateway)'
+    Value: !GetAtt MyHttpApi.ApiEndpoint
+
+  RDSEndpointAddress:
+    Description: 'Endpoint de la RDS (host) - util para depuración'
+    Value: !GetAtt MyDB.Endpoint.Address
+
+  RDSEndpointPort:
+    Description: 'Puerto del endpoint RDS'
+    Value: !GetAtt MyDB.Endpoint.Port
+
+  RDSInstanceIdentifier:
+    Description: 'Identificador de la instancia RDS'
+    Value: !Ref MyDB

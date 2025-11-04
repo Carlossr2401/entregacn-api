@@ -1,50 +1,44 @@
 import os
 import json
-import boto3
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from flask_cors import CORS
+# from flask_cors import CORS
 from pydantic import ValidationError
 from datetime import datetime
 import uuid
 from models.grades import GradeModel, UpdateGradeModel, GradeCreateModel
-import psycopg2
 
+# justo después de crear tu app
 app = Flask(__name__)
-CORS(app)
+# CORS(app, resources={r"/*": {"origins": "*"}})
 
-# --- 1️⃣ Obtener credenciales de DB desde AWS Secrets Manager ---
-SECRET_ARN = os.environ.get("DB_SECRET_ARN")
-REGION = os.environ.get("AWS_REGION", "us-east-1")  # Ajusta tu región
 
-db_username = db_password = db_host = db_name = None
+# --- 1️⃣ Configuración de conexión a la base de datos ---
+# Si estás en AWS, estos valores se pasan como variables de entorno desde CloudFormation
+db_username = os.environ.get("DB_USERNAME", "admin")
+db_password = os.environ.get("DB_PASSWORD", "admin123")
+db_host = os.environ.get("DB_HOST", "localhost")
+db_port = os.environ.get("DB_PORT", "5432")
+db_name = os.environ.get("DB_NAME", "appdb")
 
-if SECRET_ARN:
-    client = boto3.client("secretsmanager", region_name=REGION)
-    secret_value = client.get_secret_value(SecretId=SECRET_ARN)
-    secret_dict = json.loads(secret_value["SecretString"])
-    
-    db_username = secret_dict.get("username")
-    db_password = secret_dict.get("password")
-    # Puedes pasar host y nombre DB vía variables de entorno
-    db_host = os.environ.get("DB_HOST", "my-rds-endpoint")
-    db_name = os.environ.get("DB_NAME", "appdb")
-    
-    DB_URI = f"postgresql+psycopg2://{db_username}:{db_password}@{db_host}:5432/{db_name}"
-else:
-    # Fallback local para desarrollo
-    DB_URI = os.environ.get("SQLALCHEMY_DATABASE_URI", "sqlite:///test.db")
+# Construir URI de conexión a PostgreSQL
+DB_URI = f"postgresql+psycopg2://{db_username}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+# En local, puedes usar SQLite si quieres
+if os.environ.get("USE_SQLITE", "false").lower() == "true":
+    DB_URI = "sqlite:///test.db"
 
 app.config["SQLALCHEMY_DATABASE_URI"] = DB_URI
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # --- 2️⃣ Inicialización de SQLAlchemy ---
 db = SQLAlchemy(app)
+db_initialized = False # <--- AÑADE ESTA LÍNEA
 
-# --- 3️⃣ Definición del modelo de BBDD ---
+# --- 3️⃣ Modelo de base de datos ---
 class GradeDB(db.Model):
     __tablename__ = "grades"
-    
+
     id = db.Column(db.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     Clase = db.Column(db.String(100), nullable=False)
     Alumno = db.Column(db.String(100), nullable=False)
@@ -54,7 +48,7 @@ class GradeDB(db.Model):
     updated_at = db.Column(db.DateTime, server_default=db.func.now(), onupdate=datetime.utcnow)
 
     def __repr__(self):
-        return f'<GradeDB {self.Alumno} - {self.Clase}>'
+        return f"<GradeDB {self.Alumno} - {self.Clase}>"
 
 # --- 4️⃣ Manejador de errores de Pydantic ---
 @app.errorhandler(ValidationError)
@@ -62,6 +56,10 @@ def handle_validation_error(e):
     return jsonify({"errors": e.errors()}), 400
 
 # --- 5️⃣ Endpoints ---
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"message": "Correcto"}), 200
+
 @app.route('/grades', methods=['GET', 'POST'])
 def handle_grades():
     if request.method == 'POST':
@@ -84,7 +82,7 @@ def handle_grades():
         except Exception as e:
             db.session.rollback()
             return jsonify({"error": "Error al guardar en la base de datos", "details": str(e)}), 500
-    else:  # GET
+    else:
         all_grades_db = db.session.execute(db.select(GradeDB)).scalars().all()
         response_list = [GradeModel.model_validate(grade).model_dump() for grade in all_grades_db]
         return jsonify(response_list), 200
@@ -130,12 +128,37 @@ def handle_grade_by_id(grade_id):
             return jsonify({"error": "Error al eliminar de la base de datos", "details": str(e)}), 500
 
 # --- 6️⃣ Inicialización de la base de datos ---
-def setup_database(app):
-    with app.app_context():
-        db.create_all()
+from sqlalchemy.exc import OperationalError
+
+@app.before_request
+def create_tables_once():
+    """
+    Se ejecuta ANTES de cada petición.
+    Usa una bandera global para intentar crear las tablas solo una vez.
+    Esto no bloquea el arranque de la app, permitiendo que /health funcione.
+    """
+    global db_initialized
+    if not db_initialized:
+        try:
+            # app.app_context() es necesario para operaciones de BD fuera de una ruta
+            with app.app_context():
+                db.create_all()
+            
+            db_initialized = True # ¡Éxito! No lo intentes de nuevo.
+            print("--- Tablas de BD creadas/verificadas ---", flush=True)
+        
+        except OperationalError as e:
+            # La BBDD no está lista. No pasa nada.
+            # La app seguirá corriendo y /health funcionará.
+            # Se reintentará en la siguiente petición.
+            print(f"--- Falla al crear tablas (se reintentará en la prox. req): {e} ---", flush=True)
+        
+        except Exception as e:
+            # Otro error
+            print(f"--- Error inesperado al crear tablas: {e} ---", flush=True)
+
 
 # --- 7️⃣ Ejecutar la app ---
 if __name__ == '__main__':
-    setup_database(app)
-    app.run(debug=True, port=5000)
-
+    # setup_database(app)  <--- BORRA O COMENTA ESTA LÍNEA
+    app.run(host='0.0.0.0', port=5000)

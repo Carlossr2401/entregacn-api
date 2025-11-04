@@ -1,7 +1,7 @@
 // --- CONFIGURACIÓN DINÁMICA ---
-// La URL de la API y la API Key se toman desde inputs del HTML
+// La URL de la API se toma desde el input del HTML
 const APIInput = document.getElementById('api-url');
-const PASSWORDInput = document.getElementById('api-password');
+// El input de contraseña y la API Key han sido eliminados, no son necesarios.
 
 // Referencias a los elementos del DOM
 const form = document.getElementById('form-crear-nota');
@@ -12,20 +12,21 @@ const listaNotas = document.getElementById('lista-notas');
  */
 async function cargarNotas() {
     const API_URL = APIInput.value.trim();
-    const API_KEY = PASSWORDInput.value.trim();
-    if (!API_URL || !API_KEY) {
-        listaNotas.innerHTML = '<li>Introduce la URL de la API y la contraseña.</li>';
+    if (!API_URL) {
+        listaNotas.innerHTML = '<li>Introduce la URL del endpoint (ej. .../grades).</li>';
         return;
     }
 
     try {
+        console.log(API_URL)
         const response = await fetch(API_URL, {
-            method: 'GET',
-            headers: { 'x-api-key': API_KEY }
+            method: 'GET'
+            // No se necesita encabezado x-api-key
         });
+        
 
         if (!response.ok) {
-            throw new Error(`Error HTTP: ${response.status}`);
+            throw new Error(`Error HTTP: ${response.status} ${response.statusText}`);
         }
 
         const notas = await response.json();
@@ -58,7 +59,7 @@ async function cargarNotas() {
 
     } catch (error) {
         console.error('Error al cargar notas:', error);
-        listaNotas.innerHTML = '<li>Error al cargar las notas. Revisa la consola.</li>';
+        listaNotas.innerHTML = `<li>Error al cargar las notas: ${error.message}. Revisa la consola y la URL.</li>`;
     }
 }
 
@@ -68,16 +69,15 @@ async function cargarNotas() {
 async function crearNota(e) {
     e.preventDefault();
     const API_URL = APIInput.value.trim();
-    const API_KEY = PASSWORDInput.value.trim();
 
-    if (!API_URL || !API_KEY) {
-        alert('Introduce la URL de la API y la contraseña antes de crear una nota.');
+    if (!API_URL) {
+        alert('Introduce la URL del endpoint (ej. .../grades) antes de crear una nota.');
         return;
     }
 
     const clase = document.getElementById('clase').value;
     const alumno = document.getElementById('alumno').value;
-    const nota = parseInt(document.getElementById('nota').value);
+    const nota = document.getElementById('nota').value;
 
     const nuevaNota = { Clase: clase, Alumno: alumno, Nota: nota };
 
@@ -85,8 +85,8 @@ async function crearNota(e) {
         const response = await fetch(API_URL, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'x-api-key': API_KEY
+                'Content-Type': 'application/json'
+                // No se necesita encabezado x-api-key
             },
             body: JSON.stringify(nuevaNota)
         });
@@ -112,10 +112,9 @@ async function borrarNota(e) {
     if (!e.target.classList.contains('delete-btn')) return;
 
     const API_URL = APIInput.value.trim();
-    const API_KEY = PASSWORDInput.value.trim();
 
-    if (!API_URL || !API_KEY) {
-        alert('Introduce la URL de la API y la contraseña antes de borrar una nota.');
+    if (!API_URL) {
+        alert('Introduce la URL del endpoint (ej. .../grades) antes de borrar una nota.');
         return;
     }
 
@@ -123,9 +122,10 @@ async function borrarNota(e) {
     if (!confirm(`¿Seguro que quieres borrar la nota con ID: ${idParaBorrar}?`)) return;
 
     try {
+        // La URL de borrado es la API_URL (que es .../grades) + / + id
         const response = await fetch(`${API_URL}/${idParaBorrar}`, {
-            method: 'DELETE',
-            headers: { 'x-api-key': API_KEY }
+            method: 'DELETE'
+            // No se necesita encabezado x-api-key
         });
 
         if (!response.ok) {
