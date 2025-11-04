@@ -43,14 +43,14 @@ async function cargarNotas() {
             const info = document.createElement('div');
             info.className = 'nota-info';
             info.innerHTML = `
-                <span>${nota.Clase}</span> (${nota.Alumno}) - 
+                <span>${nota.ClaseNombre}</span> (${nota.AlumnoNombre}) - 
                 <strong>Nota: ${nota.Nota}</strong>
             `;
 
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'delete-btn';
             deleteBtn.innerText = 'Borrar 🗑️';
-            deleteBtn.dataset.id = nota.id;
+            deleteBtn.dataset.id = nota.NoteID;
 
             item.appendChild(info);
             item.appendChild(deleteBtn);
@@ -79,7 +79,7 @@ async function crearNota(e) {
     const alumno = document.getElementById('alumno').value;
     const nota = document.getElementById('nota').value;
 
-    const nuevaNota = { Clase: clase, Alumno: alumno, Nota: nota };
+    const nuevaNota = { ClaseNombre: clase, AlumnoNombre: alumno, Nota: nota };
 
     try {
         const response = await fetch(API_URL, {

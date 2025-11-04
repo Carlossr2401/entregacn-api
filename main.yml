@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Entrega 1.1 CN con Fargate (Contenedores) usando LabRole + RDS PostgreSQL en la misma pila (Corregido con Logs)'
+Description: 'Entrega 1.1 CN con Fargate + REST API (con OPTIONS manual) + RDS PostgreSQL'
 
 Parameters:
   VpcId:
@@ -23,11 +23,11 @@ Parameters:
     Description: 'El ARN completo de tu rol de IAM existente (LabRole)'
     Type: String
 
-  # Parámetros para RDS (no Secrets Manager)
+  # Parámetros para RDS
   DBUsername:
     Description: 'Usuario maestro para la base de datos PostgreSQL'
     Type: String
-    Default: postgresadmin # CAMBIADO: "admin" es una palabra reservada
+    Default: postgresadmin
 
   DBPassword:
     Description: 'Contraseña del usuario maestro para PostgreSQL (se recomienda NoEcho en producción)'
@@ -50,20 +50,20 @@ Parameters:
     Default: 20
 
 Resources:
-  # 1. El Cluster de ECS
+  # 1. Cluster ECS
   MyECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: 'cluster-api-clase'
 
-  # NUEVO RECURSO: Grupo de Logs para el contenedor
+  # 2. LogGroup
   MyLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/ecs/${AWS::StackName}/api-clase'
-      RetentionInDays: 7 # Guarda los logs por 7 días
+      RetentionInDays: 7
 
-  # 2. Grupo de Seguridad para el Balanceador (Abierto al puerto 80)
+  # 3. Security Groups
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -75,7 +75,6 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
 
-  # 3. Grupo de Seguridad para el Contenedor (Solo abierto al Balanceador)
   ContainerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -87,7 +86,6 @@ Resources:
           ToPort: !Ref ContainerPort
           SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
 
-  # 4. Grupo de Seguridad para la Base de Datos (permitir desde contenedor)
   DBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -99,7 +97,7 @@ Resources:
           ToPort: 5432
           SourceSecurityGroupId: !Ref ContainerSecurityGroup
 
-  # 5. El Balanceador de Carga (ALB)
+  # 4. Load Balancer
   MyLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -109,7 +107,7 @@ Resources:
       SecurityGroups:
         - !Ref LoadBalancerSecurityGroup
 
-  # 6. El "Target Group"
+  # 5. Target Group
   MyTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
@@ -117,10 +115,10 @@ Resources:
       VpcId: !Ref VpcId
       Protocol: HTTP
       Port: !Ref ContainerPort
-      HealthCheckPath: '/health' # Tu API SÍ tiene esta ruta, la dejamos
+      HealthCheckPath: '/health'
       TargetType: ip
 
-  # 7. El "Listener"
+  # 6. Listener
   MyListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -131,7 +129,7 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref MyTargetGroup
 
-  # 8. Subnet group para RDS (usa los SubnetIds proporcionados)
+  # 7. RDS Subnet Group
   MyDBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
@@ -139,13 +137,12 @@ Resources:
       SubnetIds: !Ref SubnetIds
       DBSubnetGroupName: !Sub 'db-subnet-group-${AWS::StackName}'
 
-  # 9. Instancia RDS PostgreSQL
+  # 8. RDS Instance
   MyDB:
     Type: AWS::RDS::DBInstance
     Properties:
       DBInstanceIdentifier: !Sub 'rds-postgres-${AWS::StackName}'
       Engine: postgres
-      # CAMBIADO: Eliminamos EngineVersion para que AWS elija la última compatible
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: !Ref DBAllocatedStorage
       MasterUsername: !Ref DBUsername
@@ -159,7 +156,7 @@ Resources:
       BackupRetentionPeriod: 7
       DeletionProtection: false
 
-  # 10. La "Task Definition"
+  # 9. ECS Task Definition
   MyTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -176,15 +173,12 @@ Resources:
           PortMappings:
             - ContainerPort: !Ref ContainerPort
               Protocol: tcp
-              
-          # SECCIÓN AÑADIDA: Configuración de Logs
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref MyLogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
-
           Environment:
             - Name: DB_USERNAME
               Value: !Ref DBUsername
@@ -197,7 +191,7 @@ Resources:
             - Name: DB_HOST
               Value: !GetAtt MyDB.Endpoint.Address
 
-  # 11. El Servicio (Fargate)
+  # 10. ECS Service
   MyService:
     Type: AWS::ECS::Service
     Properties:
@@ -216,77 +210,195 @@ Resources:
         - ContainerName: 'mi-api-container'
           ContainerPort: !Ref ContainerPort
           TargetGroupArn: !Ref MyTargetGroup
-    
-    # ESTA ES LA INDENTACIÓN CORRECTA (al mismo nivel que Type y Properties)
     DependsOn:
       - MyListener
       - MyDB
 
-  # 12. API Gateway (HTTP API)
-  MyHttpApi:
-    Type: AWS::ApiGatewayV2::Api
+  # 11. API Gateway REST
+  MyRestApi:
+    Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: 'api-gateway-clase'
-      ProtocolType: HTTP
+      Name: 'api-gateway-clase-REST'
+      Description: 'API REST para el servicio Fargate de Notas'
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
 
-      # ¡ASEGÚRATE DE QUE ESTA LÍNEA ESTÉ MODIFICADA!
-      Description: 'API Gateway para el servicio de Fargate - v2' 
-
-      # ¡Y ASEGÚRATE DE QUE ESTE BLOQUE ESTÉ PRESENTE!
-      CorsConfiguration:
-        AllowOrigins:
-          - '*'
-        AllowMethods:
-          - GET
-          - POST
-          - PUT
-          - DELETE
-          - OPTIONS
-          - PATCH
-        AllowHeaders:
-          - Content-Type
-          - Authorization
-          - '*'
-        MaxAge: 3600
-
-  MyApiIntegration:
-    Type: AWS::ApiGatewayV2::Integration
+  # Recursos /notas y /notas/{noteId}
+  NotasResource:
+    Type: AWS::ApiGateway::Resource
     Properties:
-      ApiId: !Ref MyHttpApi
-      IntegrationType: HTTP_PROXY
-      IntegrationMethod: ANY
-      IntegrationUri:
-        Fn::Join:
-          - ''
-          - - 'http://'
-            - !GetAtt MyLoadBalancer.DNSName
-            - '/{proxy}'
-      PayloadFormatVersion: '1.0'
+      RestApiId: !Ref MyRestApi
+      ParentId: !GetAtt MyRestApi.RootResourceId
+      PathPart: notas
 
-  MyApiRoute:
-    Type: AWS::ApiGatewayV2::Route
+  NotaResource:
+    Type: AWS::ApiGateway::Resource
     Properties:
-      ApiId: !Ref MyHttpApi
-      RouteKey: 'ANY /{proxy+}'
-      Target: !Join
-        - /
-        - - integrations
-          - !Ref MyApiIntegration
+      RestApiId: !Ref MyRestApi
+      ParentId: !Ref NotasResource
+      PathPart: "{noteId}"
+
+  # Métodos principales
+  GetNotasMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyRestApi
+      ResourceId: !Ref NotasResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub "http://${MyLoadBalancer.DNSName}/notas"
+        ConnectionType: INTERNET
+
+  PostNotasMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyRestApi
+      ResourceId: !Ref NotasResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "http://${MyLoadBalancer.DNSName}/notas"
+        ConnectionType: INTERNET
+
+  GetNotaMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyRestApi
+      ResourceId: !Ref NotaResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.noteId: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub "http://${MyLoadBalancer.DNSName}/notas/{noteId}"
+        ConnectionType: INTERNET
+        RequestParameters:
+          integration.request.path.noteId: method.request.path.noteId
+
+  PutNotaMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyRestApi
+      ResourceId: !Ref NotaResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.noteId: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: PUT
+        # --- CORRECCIÓN DE ERROR TIPOGRÁFICO AQUÍ ---
+        Uri: !Sub "http://${MyLoadBalancer.DNSName}/notas/{noteId}" # <-- Corregido de MyLoadBalaner
+        ConnectionType: INTERNET
+        RequestParameters:
+          integration.request.path.noteId: method.request.path.noteId
+
+  DeleteNotaMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyRestApi
+      ResourceId: !Ref NotaResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.noteId: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: DELETE
+        Uri: !Sub "http://${MyLoadBalancer.DNSName}/notas/{noteId}"
+        ConnectionType: INTERNET
+        RequestParameters:
+          integration.request.path.noteId: method.request.path.noteId
+
+  # Métodos OPTIONS (CORS)
+  OptionsNotasMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyRestApi
+      ResourceId: !Ref NotasResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  OptionsNotaMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref MyRestApi
+      ResourceId: !Ref NotaResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # Despliegue
+  MyApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - GetNotasMethod
+      - PostNotasMethod
+      - GetNotaMethod
+      - PutNotaMethod
+      - DeleteNotaMethod
+      - OptionsNotasMethod
+      - OptionsNotaMethod
+    Properties:
+      RestApiId: !Ref MyRestApi
 
   MyApiStage:
-    Type: AWS::ApiGatewayV2::Stage
+    Type: AWS::ApiGateway::Stage
     Properties:
-      ApiId: !Ref MyHttpApi
-      StageName: '$default'
-      AutoDeploy: true
+      RestApiId: !Ref MyRestApi
+      DeploymentId: !Ref MyApiDeployment
+      StageName: prod
 
 Outputs:
   ApiGatewayEndpoint:
-    Description: 'La URL PÚBLICA de la API (vía API Gateway)'
-    Value: !GetAtt MyHttpApi.ApiEndpoint
+    Description: 'La URL PUBLICA de la API (via API Gateway REST)'
+    Value: !Sub "https://$/.execute-api.$.amazonaws.com/prod"
 
   RDSEndpointAddress:
-    Description: 'Endpoint de la RDS (host) - util para depuración'
+    Description: 'Endpoint de la RDS (host)'
     Value: !GetAtt MyDB.Endpoint.Address
 
   RDSEndpointPort:

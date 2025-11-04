@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Stack de API Gateway + DynamoDB con 5 Lambdas (con GET /notas para todos los items).
+  Stack de REST API + DynamoDB con 5 Lambdas externas.
+  REQUIERE métodos OPTIONS manuales para CORS. [CORREGIDO]
 
 # -------------------------------------------------------------------
-# 1. Parámetros (con GET ALL en lugar de GET BY STUDENT)
+# 1. Parámetros (5 Lambdas)
 # -------------------------------------------------------------------
 Parameters:
   CreateNoteLambdaArn:
@@ -48,116 +49,191 @@ Resources:
       BillingMode: PAY_PER_REQUEST
 
   # -------------------------------------------------------------------
-  # 3. API Gateway (HTTP API)
+  # 3. API Gateway (REST API)
   # -------------------------------------------------------------------
-  NotesApi:
-    Type: AWS::ApiGatewayV2::Api
+  NotesRestApi:
+    Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: NotasApi-Vinculada-5
-      ProtocolType: HTTP
-      CorsConfiguration:
-        AllowOrigins:
-          - '*'
-        AllowMethods:
-          - GET
-          - POST
-          - PUT
-          - DELETE
-          - OPTIONS
-        AllowHeaders:
-          - Content-Type
-          - Authorization
-          
-  ApiGatewayDefaultStage:
-    Type: AWS::ApiGatewayV2::Stage
-    Properties:
-      ApiId: !Ref NotesApi
-      StageName: $default
-      AutoDeploy: true
+      Name: NotasApi-REST
+      Description: API REST para Notas de Clase
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
 
   # -------------------------------------------------------------------
-  # 4. Integraciones
+  # 4. Recursos de la API (Rutas)
   # -------------------------------------------------------------------
-  CreateNoteIntegration:
-    Type: AWS::ApiGatewayV2::Integration
+  NotasResource:
+    Type: AWS::ApiGateway::Resource
     Properties:
-      ApiId: !Ref NotesApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Ref CreateNoteLambdaArn
-      PayloadFormatVersion: '2.0'
-      
-  GetNoteByIdIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref NotesApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Ref GetNoteByIdLambdaArn
-      PayloadFormatVersion: '2.0'
-      
-  GetAllNotesIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref NotesApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Ref GetAllNotesLambdaArn
-      PayloadFormatVersion: '2.0'
+      RestApiId: !Ref NotesRestApi
+      ParentId: !GetAtt NotesRestApi.RootResourceId
+      PathPart: notas # Crea /notas
 
-  UpdateNoteIntegration:
-    Type: AWS::ApiGatewayV2::Integration
+  NotaResource:
+    Type: AWS::ApiGateway::Resource
     Properties:
-      ApiId: !Ref NotesApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Ref UpdateNoteLambdaArn
-      PayloadFormatVersion: '2.0'
-      
-  DeleteNoteIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref NotesApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !Ref DeleteNoteLambdaArn
-      PayloadFormatVersion: '2.0'
+      RestApiId: !Ref NotesRestApi
+      ParentId: !Ref NotasResource
+      PathPart: "{noteId}" # Crea /notas/{noteId}
 
   # -------------------------------------------------------------------
-  # 5. Rutas de la API (Ruta de Alumno reemplazada)
+  # 5. Métodos de Integración (Conexión a Lambdas)
   # -------------------------------------------------------------------
-  RoutePostNote:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref NotesApi
-      RouteKey: 'POST /notas'
-      Target: !Sub 'integrations/${CreateNoteIntegration}'
 
-  RouteGetNoteById:
-    Type: AWS::ApiGatewayV2::Route
+  # --- POST /notas ---
+  PostNotasMethod:
+    Type: AWS::ApiGateway::Method
     Properties:
-      ApiId: !Ref NotesApi
-      RouteKey: 'GET /notas/{noteId}'
-      Target: !Sub 'integrations/${GetNoteByIdIntegration}'
-      
-  RouteGetAllNotes:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref NotesApi
-      RouteKey: 'GET /notas'
-      Target: !Sub 'integrations/${GetAllNotesIntegration}'
+      RestApiId: !Ref NotesRestApi
+      ResourceId: !Ref NotasResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateNoteLambdaArn}/invocations"
+        # PayloadFormatVersion: "2.0" <-- ELIMINADO
 
-  RoutePutNote:
-    Type: AWS::ApiGatewayV2::Route
+  # --- GET /notas ---
+  GetAllNotesMethod:
+    Type: AWS::ApiGateway::Method
     Properties:
-      ApiId: !Ref NotesApi
-      RouteKey: 'PUT /notas/{noteId}'
-      Target: !Sub 'integrations/${UpdateNoteIntegration}'
+      RestApiId: !Ref NotesRestApi
+      ResourceId: !Ref NotasResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST 
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetAllNotesLambdaArn}/invocations"
+        # PayloadFormatVersion: "2.0" <-- ELIMINADO
+        
+  # --- GET /notas/{noteId} ---
+  GetNoteByIdMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesRestApi
+      ResourceId: !Ref NotaResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetNoteByIdLambdaArn}/invocations"
+        # PayloadFormatVersion: "2.0" <-- ELIMINADO
 
-  RouteDeleteNote:
-    Type: AWS::ApiGatewayV2::Route
+  # --- PUT /notas/{noteId} ---
+  PutNoteMethod:
+    Type: AWS::ApiGateway::Method
     Properties:
-      ApiId: !Ref NotesApi
-      RouteKey: 'DELETE /notas/{noteId}'
-      Target: !Sub 'integrations/${DeleteNoteIntegration}'
+      RestApiId: !Ref NotesRestApi
+      ResourceId: !Ref NotaResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UpdateNoteLambdaArn}/invocations"
+        # PayloadFormatVersion: "2.0" <-- ELIMINADO
+
+  # --- DELETE /notas/{noteId} ---
+  DeleteNoteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesRestApi
+      ResourceId: !Ref NotaResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteNoteLambdaArn}/invocations"
+        # PayloadFormatVersion: "2.0" <-- ELIMINADO
 
   # -------------------------------------------------------------------
-  # 6. Permisos
+  # 6. Métodos MOCK para CORS (¡OBLIGATORIO en REST API!)
+  # -------------------------------------------------------------------
+
+  # --- OPTIONS /notas ---
+  OptionsNotasMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesRestApi
+      ResourceId: !Ref NotasResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+            
+  # --- OPTIONS /notas/{noteId} ---
+  OptionsNotaMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesRestApi
+      ResourceId: !Ref NotaResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # -------------------------------------------------------------------
+  # 7. Despliegue de la API
+  # -------------------------------------------------------------------
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: # Debe depender de todos los métodos
+      - PostNotasMethod
+      - GetAllNotesMethod
+      - GetNoteByIdMethod
+      - PutNoteMethod
+      - DeleteNoteMethod
+      - OptionsNotasMethod
+      - OptionsNotaMethod
+    Properties:
+      RestApiId: !Ref NotesRestApi
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref NotesRestApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod # La etapa 'prod' ahora será parte de la URL
+
+  # -------------------------------------------------------------------
+  # 8. Permisos
   # -------------------------------------------------------------------
   LambdaPermissionCreate:
     Type: AWS::Lambda::Permission
@@ -165,7 +241,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref CreateNoteLambdaArn
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesRestApi}/*/POST/notas"
       
   LambdaPermissionGetById:
     Type: AWS::Lambda::Permission
@@ -173,15 +249,15 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref GetNoteByIdLambdaArn
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesRestApi}/*/GET/notas/{noteId}"
       
-  LambdaPermissionGetAllNotes: # <-- CAMBIADO
+  LambdaPermissionGetAllNotes:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref GetAllNotesLambdaArn # <-- CAMBIADO
+      FunctionName: !Ref GetAllNotesLambdaArn
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesRestApi}/*/GET/notas"
       
   LambdaPermissionUpdate:
     Type: AWS::Lambda::Permission
@@ -189,7 +265,7 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref UpdateNoteLambdaArn
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesRestApi}/*/PUT/notas/{noteId}"
       
   LambdaPermissionDelete:
     Type: AWS::Lambda::Permission
@@ -197,12 +273,12 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref DeleteNoteLambdaArn
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*'
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesRestApi}/*/DELETE/notas/{noteId}"
 
 Outputs:
   NotasApiEndpoint:
-    Description: "URL del endpoint de la API de Notas (conectada a 5 Lambdas manuales)"
-    Value: !GetAtt NotesApi.ApiEndpoint
+    Description: "URL del endpoint de la API de Notas (REST API)"
+    Value: !Sub "https://${NotesRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
   NotasTableName:
     Description: "Nombre de la tabla DynamoDB de Notas"
     Value: !Ref NotasTable
