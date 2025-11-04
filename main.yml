@@ -395,7 +395,7 @@ Resources:
 Outputs:
   ApiGatewayEndpoint:
     Description: 'La URL PUBLICA de la API (via API Gateway REST)'
-    Value: !Sub "https://$/.execute-api.$.amazonaws.com/prod"
+    Value: !Sub "https://${MyRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
 
   RDSEndpointAddress:
     Description: 'Endpoint de la RDS (host)'
