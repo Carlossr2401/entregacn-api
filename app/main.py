@@ -35,12 +35,12 @@ db_initialized = False
 
 # --- 3️⃣ Modelo de base de datos (MODIFICADO) ---
 # He cambiado los nombres de las columnas para que coincidan con tu frontend
-# (Alumno -> AlumnoNombre, Clase -> ClaseNombre, id -> noteId)
+# (Alumno -> AlumnoNombre, Clase -> ClaseNombre, id -> NoteID)
 class GradeDB(db.Model):
     __tablename__ = "notas" # Cambiado de 'grades' a 'notas'
 
-    # Clave primaria cambiada a 'noteId' para coincidir con las rutas
-    noteId = db.Column(db.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Clave primaria cambiada a 'NoteID' para coincidir con las rutas
+    NoteID = db.Column(db.Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     
     ClaseNombre = db.Column(db.String(100), nullable=False) # Cambiado de 'Clase'
     AlumnoNombre = db.Column(db.String(100), nullable=False) # Cambiado de 'Alumno'
@@ -98,14 +98,14 @@ def handle_notas(): # Nombre de función cambiado
         response_list = [GradeModel.model_validate(grade).model_dump() for grade in all_grades_db]
         return jsonify(response_list), 200
 
-# Ruta cambiada de '/grades/<uuid:grade_id>' a '/notas/<uuid:noteId>'
-@app.route('/notas/<uuid:noteId>', methods=['GET', 'PUT', 'DELETE'])
-def handle_note_by_id(noteId): # Argumento cambiado a 'noteId'
+# Ruta cambiada de '/grades/<uuid:grade_id>' a '/notas/<uuid:NoteID>'
+@app.route('/notas/<uuid:NoteID>', methods=['GET', 'PUT', 'DELETE'])
+def handle_note_by_id(NoteID): # Argumento cambiado a 'NoteID'
     
-    # Lógica de búsqueda cambiada para usar 'noteId'
-    grade_db = db.session.get(GradeDB, noteId) 
+    # Lógica de búsqueda cambiada para usar 'NoteID'
+    grade_db = db.session.get(GradeDB, NoteID) 
     if not grade_db:
-        return jsonify({"error": f"Elemento con ID {noteId} no encontrado."}), 404
+        return jsonify({"error": f"Elemento con ID {NoteID} no encontrado."}), 404
 
     if request.method == 'GET':
         response_model = GradeModel.model_validate(grade_db)
@@ -137,7 +137,7 @@ def handle_note_by_id(noteId): # Argumento cambiado a 'noteId'
         try:
             db.session.delete(grade_db)
             db.session.commit()
-            return jsonify({"mensaje": f"Elemento con ID {noteId} eliminado."}), 200
+            return jsonify({"mensaje": f"Elemento con ID {NoteID} eliminado."}), 200
         except Exception as e:
             db.session.rollback()
             return jsonify({"error": "Error al eliminar de la base de datos", "details": str(e)}), 500

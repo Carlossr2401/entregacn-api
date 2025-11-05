@@ -63,7 +63,7 @@ class GradeModel(BaseModel):
     model_config = ConfigDict(from_attributes=True) 
 
     # Campos gestionados por la BBDD
-    noteId: uuid.UUID       # <--- CORREGIDO (de 'id' a 'noteId')
+    NoteID: uuid.UUID       # <--- CORREGIDO (de 'id' a 'noteId')
     created_at: datetime
     updated_at: datetime
     
