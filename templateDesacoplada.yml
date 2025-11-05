@@ -68,14 +68,14 @@ Resources:
     Properties:
       RestApiId: !Ref NotesRestApi
       ParentId: !GetAtt NotesRestApi.RootResourceId
-      PathPart: notas # Crea /notas
+      PathPart: notas
 
   NotaResource:
     Type: AWS::ApiGateway::Resource
     Properties:
       RestApiId: !Ref NotesRestApi
       ParentId: !Ref NotasResource
-      PathPart: "{noteId}" # Crea /notas/{noteId}
+      PathPart: "{noteId}"
 
   # -------------------------------------------------------------------
   # 5. Métodos de Integración (Conexión a Lambdas)
@@ -93,7 +93,6 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateNoteLambdaArn}/invocations"
-        # PayloadFormatVersion: "2.0" <-- ELIMINADO
 
   # --- GET /notas ---
   GetAllNotesMethod:
@@ -107,7 +106,6 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST 
         Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetAllNotesLambdaArn}/invocations"
-        # PayloadFormatVersion: "2.0" <-- ELIMINADO
         
   # --- GET /notas/{noteId} ---
   GetNoteByIdMethod:
@@ -121,7 +119,6 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetNoteByIdLambdaArn}/invocations"
-        # PayloadFormatVersion: "2.0" <-- ELIMINADO
 
   # --- PUT /notas/{noteId} ---
   PutNoteMethod:
@@ -135,7 +132,6 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${UpdateNoteLambdaArn}/invocations"
-        # PayloadFormatVersion: "2.0" <-- ELIMINADO
 
   # --- DELETE /notas/{noteId} ---
   DeleteNoteMethod:
@@ -149,7 +145,6 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteNoteLambdaArn}/invocations"
-        # PayloadFormatVersion: "2.0" <-- ELIMINADO
 
   # -------------------------------------------------------------------
   # 6. Métodos MOCK para CORS (¡OBLIGATORIO en REST API!)
@@ -214,7 +209,7 @@ Resources:
   # -------------------------------------------------------------------
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
-    DependsOn: # Debe depender de todos los métodos
+    DependsOn:
       - PostNotasMethod
       - GetAllNotesMethod
       - GetNoteByIdMethod
@@ -230,7 +225,7 @@ Resources:
     Properties:
       RestApiId: !Ref NotesRestApi
       DeploymentId: !Ref ApiDeployment
-      StageName: prod # La etapa 'prod' ahora será parte de la URL
+      StageName: prod
 
   # -------------------------------------------------------------------
   # 8. Permisos

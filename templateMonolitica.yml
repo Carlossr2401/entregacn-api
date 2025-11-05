@@ -295,8 +295,7 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: PUT
-        # --- CORRECCIÓN DE ERROR TIPOGRÁFICO AQUÍ ---
-        Uri: !Sub "http://${MyLoadBalancer.DNSName}/notas/{noteId}" # <-- Corregido de MyLoadBalaner
+        Uri: !Sub "http://${MyLoadBalancer.DNSName}/notas/{noteId}"
         ConnectionType: INTERNET
         RequestParameters:
           integration.request.path.noteId: method.request.path.noteId
