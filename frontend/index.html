@@ -3,48 +3,74 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control de Notas (API)</title>
+    <title>Control de Notas (CRUD Completo)</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
     <h1>📚 Sistema de Control de Notas</h1>
 
-    <!-- --- ZONA DE CONFIGURACIÓN --- -->
-    <section id="configuracion" style="border:1px solid #ccc; padding:10px; margin-bottom:20px;">
-        <h2>⚙ Configuración de la API</h2>
+    <section id="seccion-config" class="container-config">
+        <h2>⚙️ Configuración de la API</h2>
         <div class="form-grupo">
-            <label for="api-url">URL de la API Gateway:</label>
-            <input type="text" id="api-url" placeholder="https://abc123xyz.execute-api.eu-west-1.amazonaws.com/prod/" style="width:100%;">
+            <label for="api-url-input">URL de la API Gateway (incluyendo /prod):</label>
+            <input type="text" id="api-url-input" placeholder="https://abc123xyz.execute-api.us-east-1.amazonaws.com/prod">
         </div>
-        <div class="form-grupo">
-            <label for="api-password">Contraseña / Token (opcional):</label>
-            <input type="text" id="api-password" placeholder="Introduce la contraseña si aplica" style="width:100%;">
-        </div>
+        <button id="btn-load-api">Cargar API</button>
     </section>
 
-    <!-- --- FORMULARIO PARA CREAR NOTAS --- -->
-    <form id="form-crear-nota">
-        <h2>Añadir Nueva Nota</h2>
-        <div class="form-grupo">
-            <label for="clase">Clase:</label>
-            <input type="text" id="clase" placeholder="Ej: Matemáticas" required>
-        </div>
-        <div class="form-grupo">
-            <label for="alumno">Alumno:</label>
-            <input type="text" id="alumno" placeholder="Ej: Ana López" required>
-        </div>
-        <div class="form-grupo">
-            <label for="nota">Nota:</label>
-            <input type="number" id="nota" min="0" max="10" placeholder="Ej: 8" required>
-        </div>
-        <button type="submit">Guardar Nota</button>
-    </form>
+    <div id="app-container" class="container hidden">
+        
+        <div class="columna-izquierda">
+            <div class="formulario-container">
+                <form id="form-nota">
+                    <h2 id="form-titulo">Añadir Nueva Nota</h2>
+                    <input type="hidden" id="edit-note-id">
+                    
+                    <div class="form-grupo">
+                        <label for="clase-nombre">Clase:</label>
+                        <input type="text" id="clase-nombre" placeholder="Ej: Computación en la nube" required>
+                    </div>
+                    <div class="form-grupo">
+                        <label for="alumno-nombre">Alumno:</label>
+                        <input type="text" id="alumno-nombre" placeholder="Ej: Carlos" required>
+                    </div>
+                    <div class="form-grupo">
+                        <label for="nota">Nota:</label>
+                        <input type="number" id="nota" min="0" max="10" placeholder="Ej: 10" required>
+                    </div>
+                    
+                    <div class="botones-container">
+                        <button type="submit" id="btn-guardar">Guardar Nota</button>
+                        <button type="button" id="btn-cancelar" class="btn-secundario hidden">Cancelar Edición</button>
+                    </div>
+                </form>
+            </div>
 
-    <hr>
+            <div class="tabla-container">
+                <h2>Notas Actuales</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Alumno</th>
+                            <th>Clase</th>
+                            <th>Nota</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="lista-notas-tbody">
+                        </tbody>
+                </table>
+            </div>
+        </div>
 
-    <h2>Notas Actuales</h2>
-    <ul id="lista-notas"></ul>
+        <div class="columna-derecha">
+            <div class="json-container">
+                <h2>Datos Completos (JSON)</h2>
+                <pre id="json-content">Haz clic en el botón "JSON" de una nota para ver los datos completos aquí.</pre>
+            </div>
+        </div>
+    </div>
 
     <script src="app.js"></script>
 </body>
