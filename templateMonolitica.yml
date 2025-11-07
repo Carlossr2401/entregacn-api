@@ -1,15 +1,21 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Entrega 1.1 CN con Fargate + REST API (con OPTIONS manual) + RDS PostgreSQL'
+Description: >
+  Stack CN con Fargate PRIVADO + REST API + RDS PRIVADO.
+  Usa una lista de subredes y Endpoints para ECR y Logs.
 
 Parameters:
   VpcId:
-    Description: 'La VPC donde se ejecutarán los contenedores. Elige tu VPC por defecto.'
+    Description: 'La VPC donde se desplegarán los contenedores.'
     Type: AWS::EC2::VPC::Id
 
   SubnetIds:
-    Description: 'Elige al menos DOS subredes (DEBEN SER PÚBLICAS para el ALB y Fargate con IP pública).'
+    Description: 'Elige al menos DOS subredes. Se usarán para el ALB, ECS y RDS.'
     Type: List<AWS::EC2::Subnet::Id>
 
+  PrivateRtbId:
+    Description: 'El ID de la Tabla de Rutas (rtb-xxx) asociada a tus subredes.'
+    Type: String
+    
   ImageUrl:
     Description: 'La URL completa de tu imagen en ECR (ej. 123456.dkr.ecr.region.amazonaws.com/mi-api:latest)'
     Type: String
@@ -30,7 +36,7 @@ Parameters:
     Default: postgresadmin
 
   DBPassword:
-    Description: 'Contraseña del usuario maestro para PostgreSQL (se recomienda NoEcho en producción)'
+    Description: 'Contraseña del usuario maestro para PostgreSQL'
     Type: String
     NoEcho: true
 
@@ -54,7 +60,7 @@ Resources:
   MyECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: 'cluster-api-clase'
+      ClusterName: 'cluster-api-clase-privado'
 
   # 2. LogGroup
   MyLogGroup:
@@ -78,7 +84,7 @@ Resources:
   ContainerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: 'Permite trafico solo desde el Balanceador de Carga'
+      GroupDescription: 'Permite trafico solo desde el ALB'
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -97,7 +103,18 @@ Resources:
           ToPort: 5432
           SourceSecurityGroupId: !Ref ContainerSecurityGroup
 
-  # 4. Load Balancer
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'SG para los VPC Endpoints de ECR y Logs'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443 # HTTPS
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ContainerSecurityGroup
+
+  # 4. Load Balancer (Público)
   MyLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -115,7 +132,7 @@ Resources:
       VpcId: !Ref VpcId
       Protocol: HTTP
       Port: !Ref ContainerPort
-      HealthCheckPath: '/health'
+      HealthCheckPath: '/health' # <-- El ALB comprobará esta ruta
       TargetType: ip
 
   # 6. Listener
@@ -137,7 +154,7 @@ Resources:
       SubnetIds: !Ref SubnetIds
       DBSubnetGroupName: !Sub 'db-subnet-group-${AWS::StackName}'
 
-  # 8. RDS Instance
+  # 8. RDS Instance (Privada)
   MyDB:
     Type: AWS::RDS::DBInstance
     Properties:
@@ -151,7 +168,7 @@ Resources:
       VPCSecurityGroups:
         - !Ref DBSecurityGroup
       DBSubnetGroupName: !Ref MyDBSubnetGroup
-      PubliclyAccessible: false
+      PubliclyAccessible: false # <-- PRIVADO
       MultiAZ: false
       BackupRetentionPeriod: 7
       DeletionProtection: false
@@ -191,7 +208,7 @@ Resources:
             - Name: DB_HOST
               Value: !GetAtt MyDB.Endpoint.Address
 
-  # 10. ECS Service
+  # 10. ECS Service (Privado)
   MyService:
     Type: AWS::ECS::Service
     Properties:
@@ -202,7 +219,7 @@ Resources:
       DesiredCount: 1
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
+          AssignPublicIp: DISABLED # <-- AISLADO
           Subnets: !Ref SubnetIds
           SecurityGroups:
             - !Ref ContainerSecurityGroup
@@ -214,7 +231,7 @@ Resources:
       - MyListener
       - MyDB
 
-  # 11. API Gateway REST
+  # 11. API Gateway REST (Frontend)
   MyRestApi:
     Type: AWS::ApiGateway::RestApi
     Properties:
@@ -224,7 +241,6 @@ Resources:
         Types:
           - REGIONAL
 
-  # Recursos /notas y /notas/{noteId}
   NotasResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -239,7 +255,7 @@ Resources:
       ParentId: !Ref NotasResource
       PathPart: "{noteId}"
 
-  # Métodos principales
+  # Métodos (Integración HTTP_PROXY al ALB)
   GetNotasMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -391,19 +407,65 @@ Resources:
       DeploymentId: !Ref MyApiDeployment
       StageName: prod
 
+  # -------------------------------------------------------------------
+  # 12. VPC ENDPOINTS (Para ECR Privado y Logs)
+  # -------------------------------------------------------------------
+
+  EcrApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecr.api"
+      VpcEndpointType: Interface
+      SubnetIds: !Ref SubnetIds
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+
+  EcrDkrEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecr.dkr"
+      VpcEndpointType: Interface
+      SubnetIds: !Ref SubnetIds
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+
+  LogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.logs"
+      VpcEndpointType: Interface
+      SubnetIds: !Ref SubnetIds
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRtbId # <-- Usa el parámetro que te pedirá CloudFormation
+
 Outputs:
   ApiGatewayEndpoint:
     Description: 'La URL PUBLICA de la API (via API Gateway REST)'
-    Value: !Sub "https://${MyRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+    Value: !Sub "https://${MyRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod" # <-- Corregido
 
   RDSEndpointAddress:
-    Description: 'Endpoint de la RDS (host)'
+    Description: 'Endpoint de la RDS (host) - PRIVADO'
     Value: !GetAtt MyDB.Endpoint.Address
 
   RDSEndpointPort:
-    Description: 'Puerto del endpoint RDS'
+    Description: 'Puerto del endpoint RDS - PRIVADO'
     Value: !GetAtt MyDB.Endpoint.Port
 
-  RDSInstanceIdentifier:
-    Description: 'Identificador de la instancia RDS'
-    Value: !Ref MyDB
+  LoadBalancerDNS:
+    Description: 'DNS del ALB (Público, pero usado por API Gateway)'
+    Value: !GetAtt MyLoadBalancer.DNSName
