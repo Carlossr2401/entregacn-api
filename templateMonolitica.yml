@@ -132,7 +132,7 @@ Resources:
       VpcId: !Ref VpcId
       Protocol: HTTP
       Port: !Ref ContainerPort
-      HealthCheckPath: '/health' # <-- El ALB comprobará esta ruta
+      HealthCheckPath: '/health'
       TargetType: ip
 
   # 6. Listener
@@ -219,7 +219,7 @@ Resources:
       DesiredCount: 1
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: DISABLED # <-- AISLADO
+          AssignPublicIp: DISABLED
           Subnets: !Ref SubnetIds
           SecurityGroups:
             - !Ref ContainerSecurityGroup
@@ -451,12 +451,12 @@ Resources:
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
       VpcEndpointType: Gateway
       RouteTableIds:
-        - !Ref PrivateRtbId # <-- Usa el parámetro que te pedirá CloudFormation
+        - !Ref PrivateRtbId
 
 Outputs:
   ApiGatewayEndpoint:
     Description: 'La URL PUBLICA de la API (via API Gateway REST)'
-    Value: !Sub "https://${MyRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod" # <-- Corregido
+    Value: !Sub "https://${MyRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
 
   RDSEndpointAddress:
     Description: 'Endpoint de la RDS (host) - PRIVADO'
