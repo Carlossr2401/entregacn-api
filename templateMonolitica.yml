@@ -255,7 +255,7 @@ Resources:
       ParentId: !Ref NotasResource
       PathPart: "{noteId}"
 
-  # Métodos (Integración HTTP_PROXY al ALB)
+  # Métodos
   GetNotasMethod:
     Type: AWS::ApiGateway::Method
     Properties:
@@ -408,7 +408,7 @@ Resources:
       StageName: prod
 
   # -------------------------------------------------------------------
-  # 12. VPC ENDPOINTS (Para ECR Privado y Logs)
+  # 12. VPC ENDPOINTS
   # -------------------------------------------------------------------
 
   EcrApiEndpoint:

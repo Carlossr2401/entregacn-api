@@ -5,7 +5,7 @@ Description: >
   Maneja CORS con métodos MOCK.
 
 # -------------------------------------------------------------------
-# 1. Parámetros (Rol Externo)
+# 1. Parámetros
 # -------------------------------------------------------------------
 Parameters:
   LambdaExecutionRoleArn:
@@ -367,7 +367,7 @@ Resources:
         Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteNoteLambda.Arn}/invocations"
 
   # -------------------------------------------------------------------
-  # 7. Métodos MOCK para CORS (¡CORREGIDO!)
+  # 7. Métodos MOCK para CORS
   # -------------------------------------------------------------------
   
   OptionsNotasMethod:
